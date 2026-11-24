@@ -53,6 +53,10 @@ All commits go into a **separate repo** (default `~/my-contrib-farm`), never int
 
 Running it again on the same repo **adds** commits on top of the existing ones.
 
+**Busy days:** the graph's colors are relative to your busiest day. If you have one real day with 30+ contributions, everything else looks pale next to it. Use `-BusyDays` / `--busy-days` to give a number of random days 30 to 50 contributions each (change the range with the busy min/max options). With an exact total, the busy days are part of that total.
+
+**Why it pushes in batches:** GitHub only counts roughly the newest 1,000 commits of a single push and silently skips the older ones, so months at the start of your range would stay empty. The script pushes oldest first, 500 commits at a time, so all of them count.
+
 ## Options
 
 | PowerShell (`farm.ps1`) | Bash (`farm.sh`) | Default | What it does |
@@ -63,6 +67,9 @@ Running it again on the same repo **adds** commits on top of the existing ones.
 | `-Days` | `--days` | 365 | How many days back to start (if no start date) |
 | `-MinPerDay` | `--min` | 1 | Min commits on an active day (random mode) |
 | `-MaxPerDay` | `--max` | 8 | Max commits on an active day (random mode) |
+| `-BusyDays` | `--busy-days` | 0 | How many days get a lot of contributions |
+| `-BusyMin` | `--busy-min` | 30 | Min contributions on a busy day |
+| `-BusyMax` | `--busy-max` | 50 | Max contributions on a busy day |
 | `-SkipChance` | `--skip` | 20 | % chance a day is left empty |
 | `-SkipWeekends` | `--skip-weekends` | off | No commits on weekends |
 | `-StartHour` | `--start-hour` | 9 | Earliest hour for commits (0-23) |
@@ -73,18 +80,21 @@ Running it again on the same repo **adds** commits on top of the existing ones.
 | `-RepoName` | `--name` | my-contrib-farm | Name for the auto-created repo |
 | `-Public` | `--public` | private | Make the auto-created repo public |
 | `-Push` | `--push` | off | Push to GitHub when done |
+| `-BatchSize` | `--batch` | 500 | Commits per push (see below) |
 
 Examples:
 ```powershell
 .\farm.ps1 -Total 5000 -Push                                  # exactly 5000 over the last year
 .\farm.ps1 -Total 800 -From 2025-01-01 -To 2025-12-31 -Push   # exactly 800 in 2025
 .\farm.ps1 -Total 300 -SkipWeekends -StartHour 9 -EndHour 17  # office hours only
+.\farm.ps1 -Total 5000 -BusyDays 25 -Push                     # 25 days with 30-50 each
 .\farm.ps1 -Days 180 -MaxPerDay 10 -SkipWeekends -Push        # random amount, last 6 months
 ```
 ```bash
 ./farm.sh --total 5000 --push
 ./farm.sh --total 800 --from 2025-01-01 --to 2025-12-31 --push
 ./farm.sh --total 300 --skip-weekends --start-hour 9 --end-hour 17
+./farm.sh --total 5000 --busy-days 25 --push
 ./farm.sh --days 180 --max 10 --skip-weekends --push
 ```
 
@@ -95,6 +105,7 @@ Examples:
 - The repo can't be a fork.
 - Private repo? Turn on **Private contributions** on your profile (click "Contribution settings" above the graph).
 - Give GitHub a few minutes to update the graph.
+- Pushed thousands of commits at once with an older version (or by hand)? GitHub only counted the newest ~1,000 of that push and won't count the rest later. Run the script again for the empty period, it pushes in batches.
 
 ## Undo
 

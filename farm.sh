@@ -16,6 +16,9 @@ TO=""
 MIN=1
 MAX=8
 SKIP=20
+BUSY_DAYS=0
+BUSY_MIN=30
+BUSY_MAX=50
 SKIP_WEEKENDS=0
 START_HOUR=9
 END_HOUR=23
@@ -24,6 +27,7 @@ REMOTE=""
 REPO_NAME="my-contrib-farm"
 PUBLIC=0
 PUSH=0
+BATCH=500
 GUIDED=0
 
 usage() {
@@ -36,6 +40,9 @@ Usage: ./farm.sh [options]   (no options = guided setup)
   --min N            min commits on an active day (default: 1)
   --max N            max commits on an active day (default: 8)
   --skip N           % chance a day is left empty (default: 20)
+  --busy-days N      how many days get a lot of contributions (default: 0)
+  --busy-min N       min contributions on a busy day (default: 30)
+  --busy-max N       max contributions on a busy day (default: 50)
   --skip-weekends    no commits on Saturday/Sunday
   --start-hour N     earliest hour for commits, 0-23 (default: 9)
   --end-hour N       latest hour for commits, 0-23 (default: 23)
@@ -45,6 +52,7 @@ Usage: ./farm.sh [options]   (no options = guided setup)
   --name NAME        name for the auto-created repo (default: my-contrib-farm)
   --public           make the auto-created repo public (default: private)
   --push             push to GitHub when done
+  --batch N          commits per push (default: 500; GitHub skips commits beyond ~1000 in one push)
 EOF
 }
 
@@ -81,6 +89,11 @@ if [[ $# -eq 0 ]]; then
     MIN=$(ask "Min commits on an active day?" 1)
     MAX=$(ask "Max commits on an active day?" 8)
   fi
+  BUSY_DAYS=$(ask "How many days should be extra busy (lots of contributions)?" 0)
+  if [[ "$BUSY_DAYS" != "0" ]]; then
+    BUSY_MIN=$(ask "Min contributions on a busy day?" 30)
+    BUSY_MAX=$(ask "Max contributions on a busy day?" 50)
+  fi
   SKIP=$(ask "Chance (%) a day is left empty?" 20)
   ask_yes "Skip weekends?" n && SKIP_WEEKENDS=1
   START_HOUR=$(ask "Earliest hour for commits (0-23)?" 9)
@@ -105,6 +118,9 @@ else
       --min) MIN="$2"; shift 2 ;;
       --max) MAX="$2"; shift 2 ;;
       --skip) SKIP="$2"; shift 2 ;;
+      --busy-days) BUSY_DAYS="$2"; shift 2 ;;
+      --busy-min) BUSY_MIN="$2"; shift 2 ;;
+      --busy-max) BUSY_MAX="$2"; shift 2 ;;
       --skip-weekends) SKIP_WEEKENDS=1; shift ;;
       --start-hour) START_HOUR="$2"; shift 2 ;;
       --end-hour) END_HOUR="$2"; shift 2 ;;
@@ -114,6 +130,7 @@ else
       --name) REPO_NAME="$2"; shift 2 ;;
       --public) PUBLIC=1; shift ;;
       --push) PUSH=1; shift ;;
+      --batch) BATCH="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) usage; die "unknown option: $1" ;;
     esac
@@ -121,8 +138,9 @@ else
 fi
 
 # ---------- validate ----------
-for v in TOTAL DAYS MIN MAX SKIP START_HOUR END_HOUR; do is_int "${!v}" || die "$v must be a whole number"; done
+for v in TOTAL DAYS MIN MAX SKIP START_HOUR END_HOUR BATCH BUSY_DAYS BUSY_MIN BUSY_MAX; do is_int "${!v}" || die "$v must be a whole number"; done
 (( MIN <= MAX )) || die "--min cannot be larger than --max"
+(( BUSY_MIN <= BUSY_MAX )) || die "--busy-min cannot be larger than --busy-max"
 (( SKIP <= 100 )) || die "--skip must be 0-100"
 (( START_HOUR <= END_HOUR && END_HOUR <= 23 )) || die "hours must be 0-23 and start <= end"
 [[ -n "$MESSAGE" ]] || MESSAGE="update"
@@ -151,22 +169,45 @@ done
 N=${#LABELS[@]}
 (( N > 0 )) || die "no days left to commit on. Lower the skip chance, turn off skip weekends, or widen the dates."
 
-COUNTS=()
+COUNTS=(); BUSY=(); IDX=()
+for (( i = 0; i < N; i++ )); do COUNTS+=(0); BUSY+=(0); IDX+=("$i"); done
+
+# busy days first: random days that get BUSY_MIN..BUSY_MAX contributions
+BUSY_N=$(( BUSY_DAYS < N ? BUSY_DAYS : N ))
+BUSY_SUM=0
+for (( j = 0; j < BUSY_N; j++ )); do
+  r=$(( j + (RANDOM * 32768 + RANDOM) % (N - j) )); t=${IDX[j]}; IDX[j]=${IDX[r]}; IDX[r]=$t
+  i=${IDX[j]}; BUSY[i]=1
+  COUNTS[i]=$(( BUSY_MIN + RANDOM % (BUSY_MAX - BUSY_MIN + 1) ))
+  BUSY_SUM=$(( BUSY_SUM + COUNTS[i] ))
+done
+NORMAL=(); for (( i = 0; i < N; i++ )); do if [[ ${BUSY[i]} -eq 0 ]]; then NORMAL+=("$i"); fi; done
+
 if (( TOTAL > 0 )); then
-  # exact total: spread it over the active days with random weights so busy and quiet days mix
+  # exact total: the busy days take their share, the rest is spread over the other days with random weights
+  REST=$(( TOTAL - BUSY_SUM ))
+  (( REST >= 0 )) || die "the $BUSY_N busy days alone make $BUSY_SUM contributions, more than your total of $TOTAL. Lower --busy-days/--busy-min or raise --total."
+  if (( ${#NORMAL[@]} > 0 )); then POOL=("${NORMAL[@]}"); else POOL=("${IDX[@]}"); fi
+  P=${#POOL[@]}
   W=(); SUMW=0
-  for (( i = 0; i < N; i++ )); do W+=( $(( 1 + RANDOM % 10 )) ); SUMW=$(( SUMW + W[i] )); done
+  for (( p = 0; p < P; p++ )); do W+=( $(( 1 + RANDOM % 10 )) ); SUMW=$(( SUMW + W[p] )); done
   GIVEN=0
-  for (( i = 0; i < N; i++ )); do COUNTS+=( $(( TOTAL * W[i] / SUMW )) ); GIVEN=$(( GIVEN + COUNTS[i] )); done
-  for (( r = GIVEN; r < TOTAL; r++ )); do i=$(( (RANDOM * 32768 + RANDOM) % N )); COUNTS[i]=$(( COUNTS[i] + 1 )); done
+  for (( p = 0; p < P; p++ )); do
+    i=${POOL[p]}; n=$(( REST * W[p] / SUMW )); COUNTS[i]=$(( COUNTS[i] + n )); GIVEN=$(( GIVEN + n ))
+  done
+  for (( r = GIVEN; r < REST; r++ )); do i=${POOL[(RANDOM * 32768 + RANDOM) % P]}; COUNTS[i]=$(( COUNTS[i] + 1 )); done
 else
-  for (( i = 0; i < N; i++ )); do COUNTS+=( $(( MIN + RANDOM % (MAX - MIN + 1) )) ); done
+  for i in ${NORMAL[@]+"${NORMAL[@]}"}; do COUNTS[i]=$(( MIN + RANDOM % (MAX - MIN + 1) )); done
 fi
 PLANNED=0; BUSIEST=0
 for c in "${COUNTS[@]}"; do PLANNED=$(( PLANNED + c )); (( c > BUSIEST )) && BUSIEST=$c; done
 
 echo
 echo "Plan: $PLANNED contributions from ${LABELS[0]} to ${LABELS[N-1]}, on $N days (busiest day: $BUSIEST)"
+if (( BUSY_N > 0 )); then
+  OVER=0; for c in "${COUNTS[@]}"; do if (( c >= BUSY_MIN )); then OVER=$(( OVER + 1 )); fi; done
+  echo "      $BUSY_N busy days with $BUSY_MIN-$BUSY_MAX each ($OVER days in total have $BUSY_MIN+)"
+fi
 if [[ $GUIDED -eq 1 ]]; then ask_yes "Go?" y || exit 0; fi
 (( PLANNED > 0 )) || { echo "Nothing to do."; exit 0; }
 
@@ -189,6 +230,34 @@ EMAIL=$(git config user.email || true)
 echo "Committing as $EMAIL (must match an email on your GitHub account)"
 
 BRANCH=$(git symbolic-ref --short HEAD)
+
+# ---------- connect to GitHub first, so new commits go on top of what's already there ----------
+CREATED=0; HAS_REMOTE_BRANCH=0
+if [[ -n "$REMOTE" ]]; then
+  if git remote | grep -qx origin; then git remote set-url origin "$REMOTE"; else git remote add origin "$REMOTE"; fi
+fi
+if [[ $PUSH -eq 1 ]]; then
+  if ! git remote | grep -qx origin; then
+    [[ $HAS_GH -eq 1 ]] || die "no remote set. Pass --remote <url>, or install the GitHub CLI (https://cli.github.com)."
+    VIS="--private"; [[ $PUBLIC -eq 1 ]] && VIS="--public"
+    URL=$(gh repo create "$REPO_NAME" "$VIS") || die "creating the GitHub repo failed (see above)"
+    git remote add origin "$(echo "$URL" | tr -d '[:space:]')"
+    CREATED=1
+  fi
+  git fetch -q origin || die "could not reach the GitHub repo (see above)"
+  if git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null; then
+    HAS_REMOTE_BRANCH=1
+    if ! git rev-parse -q --verify HEAD >/dev/null; then
+      git reset -q --hard "origin/$BRANCH"     # empty local repo: start from what's on GitHub
+      NEW_REPO=0
+    elif ! git merge-base --is-ancestor "origin/$BRANCH" HEAD; then
+      # GitHub has commits we don't (README/LICENSE made on github.com): merge, never rebase
+      echo "GitHub repo has commits you don't have locally, merging them in..."
+      git merge "origin/$BRANCH" --allow-unrelated-histories --no-edit -q -X ours || die "merge failed. Resolve it in $REPO_PATH and run again."
+    fi
+  fi
+fi
+
 HAS_HEAD=0; git rev-parse -q --verify HEAD >/dev/null && HAS_HEAD=1
 
 # Build one git fast-import stream: thousands of commits in seconds instead of minutes
@@ -230,26 +299,23 @@ git reset -q --hard
 echo "Done: $PLANNED commits in $REPO_PATH"
 
 # ---------- push ----------
-HAS_ORIGIN=0; git remote | grep -qx origin && HAS_ORIGIN=1
-if [[ -n "$REMOTE" ]]; then
-  if [[ $HAS_ORIGIN -eq 1 ]]; then git remote set-url origin "$REMOTE"; else git remote add origin "$REMOTE"; fi
-  HAS_ORIGIN=1
-fi
-
 if [[ $PUSH -eq 1 ]]; then
-  if [[ $HAS_ORIGIN -eq 0 ]]; then
-    [[ $HAS_GH -eq 1 ]] || die "no remote set. Pass --remote <url>, or install the GitHub CLI (https://cli.github.com)."
-    VIS="--private"; [[ $PUBLIC -eq 1 ]] && VIS="--public"
-    gh repo create "$REPO_NAME" "$VIS" --source . --remote origin --push
-  elif ! git push -u origin "$BRANCH"; then
-    # GitHub repo already has commits (README/LICENSE made on github.com): merge, never rebase
-    echo "GitHub repo has commits you don't have locally, merging them in..."
-    git fetch -q origin
-    git merge "origin/$BRANCH" --allow-unrelated-histories --no-edit -q -X ours
-    git push -u origin "$BRANCH"
-  fi
+  # GitHub only counts roughly the newest 1000 commits of a single push, so push oldest first in batches.
+  RANGE="HEAD"; [[ $HAS_REMOTE_BRANCH -eq 1 ]] && RANGE="origin/$BRANCH..HEAD"
+  SHAS=( $(git rev-list --reverse --first-parent "$RANGE") )
+  COUNT=${#SHAS[@]}
+  (( BATCH > 0 )) || BATCH=500
+  for (( k = BATCH - 1; k < COUNT - 1; k += BATCH )); do
+    if [[ $HAS_REMOTE_BRANCH -eq 1 ]] && ! git merge-base --is-ancestor "origin/$BRANCH" "${SHAS[k]}"; then
+      continue   # would not be a fast-forward yet
+    fi
+    echo "Pushing $(( k + 1 )) / $COUNT..."
+    git push -q origin "${SHAS[k]}:refs/heads/$BRANCH"
+  done
+  echo "Pushing $COUNT / $COUNT..."
+  git push -q -u origin "$BRANCH"
   echo "Pushed. The graph can take a few minutes to update."
-  if [[ $PUBLIC -eq 0 && -z "$REMOTE" ]]; then
+  if [[ $PUBLIC -eq 0 && $CREATED -eq 1 ]]; then
     echo "The repo is private: turn on 'Private contributions' on your GitHub profile so the commits show."
   fi
 else
