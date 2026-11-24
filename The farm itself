@@ -1,0 +1,3 @@
+& "C:\Users\(INSERT YOUR ADMIN USERNAME FOR PC)\Downloads\github-contrib-farmer\farm.ps1" -RepoPath "C:\Users\(INSERT YOUR ADMIN USERNAME FOR PC)\Downloads\contrib-farm" -RemoteUrl https://github.com/YOURNAME/contrib-farm.git -Push
+
+-- (INSERT YOUR ADMIN USERNAME FOR PC IN THE PLACES I WRITE IT.) YOU MUST ALSO CREATE A REPOSITORY AND NAME IT YOUR OWN THANG
