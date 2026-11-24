@@ -251,9 +251,9 @@ if [[ $PUSH -eq 1 ]]; then
       git reset -q --hard "origin/$BRANCH"     # empty local repo: start from what's on GitHub
       NEW_REPO=0
     elif ! git merge-base --is-ancestor "origin/$BRANCH" HEAD; then
-      # GitHub has commits we don't (README/LICENSE made on github.com): merge, never rebase
+      # GitHub has commits we don't (README/LICENSE made on github.com): merge, keep GitHub's version of clashing files, never rebase
       echo "GitHub repo has commits you don't have locally, merging them in..."
-      git merge "origin/$BRANCH" --allow-unrelated-histories --no-edit -q -X ours || die "merge failed. Resolve it in $REPO_PATH and run again."
+      git merge "origin/$BRANCH" --allow-unrelated-histories --no-edit -q -X theirs || die "merge failed. Resolve it in $REPO_PATH and run again."
     fi
   fi
 fi

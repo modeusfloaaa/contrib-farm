@@ -200,10 +200,10 @@ try {
             } else {
                 git merge-base --is-ancestor "origin/$branch" HEAD
                 if ($LASTEXITCODE -ne 0) {
-                    # GitHub has commits we don't (e.g. a README/LICENSE made on github.com). Merge them in;
-                    # never rebase, that would reset every commit date to today.
+                    # GitHub has commits we don't (e.g. a README/LICENSE made on github.com). Merge them in, keeping
+                    # GitHub's version of any file that clashes. Never rebase: it would reset every commit date to today.
                     Write-Host "GitHub repo has commits you don't have locally, merging them in..." -ForegroundColor Yellow
-                    git merge "origin/$branch" --allow-unrelated-histories --no-edit -q -X ours
+                    git merge "origin/$branch" --allow-unrelated-histories --no-edit -q -X theirs
                     if ($LASTEXITCODE -ne 0) { throw "Merge failed. Resolve it in $RepoPath and run again." }
                 }
             }
